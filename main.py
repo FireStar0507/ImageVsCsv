@@ -13,37 +13,35 @@ def imageToCsv(imageName):
     color_counter = Counter()
 
     # 统计色标出现次数
-    for x in tqdm(range(w), desc="统计色标", unit="列"):
-        for y in range(h):
-            pixel_value = im.getpixel((x, y))
-            color_counter[pixel_value] += 1
+    pixels = im.getdata()
+    for pixel_value in tqdm(pixels, desc="统计色标", unit="像素"):
+        color_counter[pixel_value] += 1
 
-    # 找出出现超过 128 次的色标并为其分配记号
+    # 找出所有色标并为其分配记号
     color_mapping = {}
     marker_index = 1
-    for color, count in color_counter.items():
-        if count > 128:
-            color_mapping[color] = f"*{marker_index}"
-            marker_index += 1
+    for color in color_counter:
+        color_mapping[color] = f"*{marker_index}"
+        marker_index += 1
 
     with open(fileName, "w", newline="") as imageFile:
+        # 写入图像尺寸
+        imageFile.write(f"width={w}\n")
+        imageFile.write(f"height={h}\n")
+
         # 写入记号定义
         for color, marker in color_mapping.items():
             color_str = ','.join(str(c) if c != 0 else '' for c in color)
             imageFile.write(f"{marker}={color_str}\n")
 
-        csvObj = csv.DictWriter(imageFile, fieldnames=["x", "y", im.mode])  # 创建 CSV 写入对象
-        csvObj.writeheader()  # 写入表头
-
         # 直接写入像素数据
-        for x in tqdm(range(w), desc="写入像素数据", unit="列"):
-            for y in range(h):
-                pixel_value = im.getpixel((x, y))
-                if pixel_value in color_mapping:
-                    pixel_str = color_mapping[pixel_value]
-                else:
-                    pixel_str = ','.join(str(c) if c != 0 else '' for c in pixel_value)
-                csvObj.writerow({"x": x, "y": y, im.mode: pixel_str})
+        index = 0
+        for y in tqdm(range(h), desc="写入像素数据", unit="行"):
+            for x in range(w):
+                pixel_value = pixels[index]
+                pixel_str = color_mapping[pixel_value]
+                imageFile.write(f"{x},{y},{pixel_str}\n")
+                index += 1
 
     et = time.time()  # 记录结束时间
     print(f"{imageName}已经转换为{fileName}")
@@ -54,8 +52,10 @@ def csvToImage(csvFileName, mbgs="png"):
     width, height = 0, 0
     color_mapping = {}
 
-    # 读取记号定义
+    # 读取图像尺寸和记号定义
     with open(csvFileName, mode='r', newline='') as csvFile:
+        width = int(csvFile.readline().strip().split('=')[1])
+        height = int(csvFile.readline().strip().split('=')[1])
         for line in csvFile:
             if not line.startswith('*'):
                 break
@@ -63,33 +63,23 @@ def csvToImage(csvFileName, mbgs="png"):
             color_values = [int(c) if c else 0 for c in color_str.split(',')]
             color_mapping[marker] = tuple(color_values)
 
-    def pixel_generator():
-        with open(csvFileName, mode='r', newline='') as csvFile:
-            # 跳过记号定义
-            while csvFile.readline().startswith('*'):
-                pass
-            csvReader = csv.DictReader(csvFile)
-            for row in csvReader:
-                x = int(row["x"])
-                y = int(row["y"])
-                pixel_value_str = row[list(row.keys())[2]].strip()
-                if pixel_value_str.startswith('*'):
-                    pixel_value = color_mapping[pixel_value_str]
-                else:
-                    pixel_value = tuple(int(c) if c else 0 for c in pixel_value_str.split(','))
-                yield (x, y, pixel_value)
-
-    # 确定图像尺寸
-    for x, y, _ in tqdm(pixel_generator(), desc="确定图像尺寸"):
-        width = max(width, x + 1)
-        height = max(height, y + 1)
-
     # 创建一个新的图像对象
     im = Image.new("RGBA", (width, height))
 
     # 设置像素值
-    for x, y, pixel_value in tqdm(pixel_generator(), desc="设置像素值"):
-        im.putpixel((x, y), pixel_value)
+    with open(csvFileName, mode='r', newline='') as csvFile:
+        # 跳过图像尺寸和记号定义
+        for _ in range(2):
+            csvFile.readline()
+        while csvFile.readline().startswith('*'):
+            pass
+        for line in tqdm(csvFile, desc="设置像素值"):
+            parts = line.strip().split(',')
+            x = int(parts[0])
+            y = int(parts[1])
+            pixel_value_str = parts[2]
+            pixel_value = color_mapping[pixel_value_str]
+            im.putpixel((x, y), pixel_value)
 
     # 修正输出图像名称
     output_image_name = f"{csvFileName.partition('.')[0]}_output.{mbgs}"
@@ -105,4 +95,4 @@ def csvToImage(csvFileName, mbgs="png"):
 imageToCsv('th.jpg')
 
 # 使用 CSV 文件恢复图像
-csvToImage('th.jpg_RGBA.csv')  # 替换为正确的 CSV 文件名称
+csvToImage('th.jpg_RGBA.csv')
